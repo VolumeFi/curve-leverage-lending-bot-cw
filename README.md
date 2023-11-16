@@ -1,85 +1,63 @@
-# CosmWasm Starter Pack
+# Curve Leverage Lending Bot CosmWasm smart contract
 
-This is a template to build smart contracts in Rust to run inside a
-[Cosmos SDK](https://github.com/cosmos/cosmos-sdk) module on all chains that enable it.
-To understand the framework better, please read the overview in the
-[cosmwasm repo](https://github.com/CosmWasm/cosmwasm/blob/master/README.md),
-and dig into the [cosmwasm docs](https://www.cosmwasm.com).
-This assumes you understand the theory and just want to get coding.
+This is a CosmWasm smart contract to manage Curve Leverage Lending Bot smart contract on EVM chain written in Vyper.
 
-## Creating a new repo from template
+Users can create a crvUSD loan by deposit their token into a Vyper smart contract with leverage option on EVM chain.
 
-Assuming you have a recent version of Rust and Cargo installed
-(via [rustup](https://rustup.rs/)),
-then the following should get you a new repo to start a contract:
+A scheduler or script fetch events from the Vyper smart contract and run `repay_bot` function with the parameters via Compass-EVM on high risk or expiration.
 
-Install [cargo-generate](https://github.com/ashleygwilliams/cargo-generate) and cargo-run-script.
-Unless you did that before, run this line now:
+And then, the Vyper smart contract will repay the bot.
 
-```sh
-cargo install cargo-generate --features vendored-openssl
-cargo install cargo-run-script
-```
+## ExecuteMsg
 
-Now, use it to create your new contract.
-Go to the folder in which you want to place it and run:
+### RepayBot
 
-**Latest**
+Run `repay_bot` function on Vyper smart contract.
 
-```sh
-cargo generate --git https://github.com/CosmWasm/cw-template.git --name PROJECT_NAME
-```
+| Key                        | Type           | Description                     |
+|----------------------------|----------------|---------------------------------|
+| bot_info                   | Vec\<BotInfo\> | Array of data to add collateral |
 
-For cloning minimal code repo:
+### SetPaloma
 
-```sh
-cargo generate --git https://github.com/CosmWasm/cw-template.git --name PROJECT_NAME -d minimal=true
-```
+Run `set_paloma` function on Vyper smart contract to register this contract address data in the Vyper contract.
 
-You will now have a new folder called `PROJECT_NAME` (I hope you changed that to something else)
-containing a simple working contract and build system that you can customize.
+| Key | Type | Description |
+|-----|------|-------------|
+| -   | -    | -           |
 
-## Create a Repo
+    UpdateCompass { new_compass: String },
 
-After generating, you have a initialized local git repo, but no commits, and no remote.
-Go to a server (eg. github) and create a new upstream repo (called `YOUR-GIT-URL` below).
-Then run the following:
+### Update*
 
-```sh
-# this is needed to create a valid Cargo.lock file (see below)
-cargo check
-git branch -M main
-git add .
-git commit -m 'Initial Commit'
-git remote add origin YOUR-GIT-URL
-git push -u origin main
-```
+Run `update_*` function on Vyper smart contract to register this contract address data in the Vyper contract.
 
-## CI Support
+| Key | Type | Description |
+|-----|------|-------------|
+| -   | -    | -           |
 
-We have template configurations for both [GitHub Actions](.github/workflows/Basic.yml)
-and [Circle CI](.circleci/config.yml) in the generated project, so you can
-get up and running with CI right away.
+## QueryMsg
 
-One note is that the CI runs all `cargo` commands
-with `--locked` to ensure it uses the exact same versions as you have locally. This also means
-you must have an up-to-date `Cargo.lock` file, which is not auto-generated.
-The first time you set up the project (or after adding any dep), you should ensure the
-`Cargo.lock` file is updated, so the CI will test properly. This can be done simply by
-running `cargo check` or `cargo unit-test`.
+### GetJobId
 
-## Using your project
+Get `job_id` of Paloma message to run `multiple_withdraw` function on a Vyper smart contract.
 
-Once you have your custom repo, you should check out [Developing](./Developing.md) to explain
-more on how to run tests and develop code. Or go through the
-[online tutorial](https://docs.cosmwasm.com/) to get a better feel
-of how to develop.
+| Key | Type | Description |
+|-----|------|-------------|
+| -   | -    | -           |
 
-[Publishing](./Publishing.md) contains useful information on how to publish your contract
-to the world, once you are ready to deploy it on a running blockchain. And
-[Importing](./Importing.md) contains information about pulling in other contracts or crates
-that have been published.
+#### Response
 
-Please replace this README file with information about your specific project. You can keep
-the `Developing.md` and `Publishing.md` files as useful references, but please set some
-proper description in the README.
+| Key    | Type   | Description      |
+|--------|--------|------------------|
+| job_id | String | Job Id on Paloma |
+
+## Structs
+
+### BotInfo
+
+| Key           | Type           | Description                           |
+|---------------|----------------|---------------------------------------|
+| bot           | String         | Bot address                           |
+| callbacker    | String         | Callbacker contract address           |
+| callback_args | Vec\<Uint256\> | Callback args for callbacker contract |

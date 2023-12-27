@@ -4,7 +4,7 @@ use cosmwasm_std::{to_json_binary, Binary, Deps, DepsMut, Env, MessageInfo, Resp
 use cw2::set_contract_version;
 
 use crate::error::ContractError;
-use crate::msg::{ExecuteMsg, GetJobIdResponse, InstantiateMsg, PalomaMsg, QueryMsg};
+use crate::msg::{ExecuteMsg, GetJobIdResponse, InstantiateMsg, Metadata, PalomaMsg, QueryMsg};
 use crate::state::{State, STATE};
 use cosmwasm_std::CosmosMsg;
 use ethabi::{Contract, Function, Param, ParamType, StateMutability, Token, Uint};
@@ -23,8 +23,13 @@ pub fn instantiate(
     msg: InstantiateMsg,
 ) -> Result<Response, ContractError> {
     let state = State {
+        retry_delay: msg.retry_delay,
         job_id: msg.job_id.clone(),
         owner: info.sender.clone(),
+        metadata: Metadata {
+            creator: msg.creator,
+            signers: msg.signers,
+        },
     };
     set_contract_version(deps.storage, CONTRACT_NAME, CONTRACT_VERSION)?;
     STATE.save(deps.storage, &state)?;
@@ -37,12 +42,26 @@ pub fn instantiate(
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn execute(
     deps: DepsMut,
-    _env: Env,
+    env: Env,
     info: MessageInfo,
     msg: ExecuteMsg,
 ) -> Result<Response<PalomaMsg>, ContractError> {
     match msg {
-        ExecuteMsg::RepayBot { bot_info } => execute::repay_bot(deps, info, bot_info),
+        ExecuteMsg::RepayBot { bot_info } => execute::repay_bot(deps, env, info, bot_info),
+        ExecuteMsg::CreateNextBot {
+            bot_id,
+            callbacker,
+            callback_args,
+            remaining_count,
+        } => execute::create_next_bot(
+            deps,
+            env,
+            info,
+            bot_id,
+            callbacker,
+            callback_args,
+            remaining_count,
+        ),
         ExecuteMsg::SetPaloma {} => execute::set_paloma(deps, info),
         ExecuteMsg::UpdateCompass { new_compass } => {
             execute::update_compass(deps, info, new_compass)
@@ -68,12 +87,131 @@ pub fn execute(
 pub mod execute {
     use super::*;
     use crate::msg::BotInfo;
-    use crate::ContractError::Unauthorized;
+    use crate::state::WITHDRAW_TIMESTAMP;
+    use crate::ContractError::{AllPending, Unauthorized};
     use cosmwasm_std::Uint256;
     use ethabi::Address;
 
+    pub fn create_next_bot(
+        deps: DepsMut,
+        env: Env,
+        info: MessageInfo,
+        bot_id: Uint256,
+        callbacker: String,
+        callback_args: Vec<Uint256>,
+        remaining_count: Uint256,
+    ) -> Result<Response<PalomaMsg>, ContractError> {
+        let state = STATE.load(deps.storage)?;
+        if state.owner != info.sender {
+            return Err(Unauthorized {});
+        }
+        #[allow(deprecated)]
+        let contract: Contract = Contract {
+            constructor: None,
+            functions: BTreeMap::from_iter(vec![(
+                "create_next_bot".to_string(),
+                vec![Function {
+                    name: "create_next_bot".to_string(),
+                    inputs: vec![
+                        Param {
+                            name: "bot_id".to_string(),
+                            kind: ParamType::Array(Box::new(ParamType::Address)),
+                            internal_type: None,
+                        },
+                        Param {
+                            name: "callbacker".to_string(),
+                            kind: ParamType::Array(Box::new(ParamType::Address)),
+                            internal_type: None,
+                        },
+                        Param {
+                            name: "callback_args".to_string(),
+                            kind: ParamType::Array(Box::new(ParamType::Array(Box::new(
+                                ParamType::Uint(256),
+                            )))),
+                            internal_type: None,
+                        },
+                        Param {
+                            name: "remaining_count".to_string(),
+                            kind: ParamType::Array(Box::new(ParamType::Array(Box::new(
+                                ParamType::Uint(256),
+                            )))),
+                            internal_type: None,
+                        },
+                    ],
+                    outputs: Vec::new(),
+                    constant: None,
+                    state_mutability: StateMutability::NonPayable,
+                }],
+            )]),
+            events: BTreeMap::new(),
+            errors: BTreeMap::new(),
+            receive: false,
+            fallback: false,
+        };
+        let mut tokens: Vec<Token> = vec![];
+        let retry_delay: u64 = state.retry_delay;
+        if let Some(timestamp) = WITHDRAW_TIMESTAMP.may_load(
+            deps.storage,
+            (bot_id.to_string(), remaining_count.to_string()),
+        )? {
+            if timestamp.plus_seconds(retry_delay).lt(&env.block.time) {
+                tokens.push(Token::Uint(Uint::from_big_endian(&bot_id.to_be_bytes())));
+                tokens.push(Token::Address(
+                    Address::from_str(callbacker.as_str()).unwrap(),
+                ));
+                let mut tokens_callback_args: Vec<Token> = vec![];
+                for callback_arg in callback_args {
+                    tokens_callback_args.push(Token::Uint(Uint::from_big_endian(
+                        &callback_arg.to_be_bytes(),
+                    )))
+                }
+                tokens.push(Token::Array(tokens_callback_args));
+                WITHDRAW_TIMESTAMP.save(
+                    deps.storage,
+                    (bot_id.to_string(), remaining_count.to_string()),
+                    &env.block.time,
+                )?;
+            }
+        } else {
+            tokens.push(Token::Uint(Uint::from_big_endian(&bot_id.to_be_bytes())));
+            tokens.push(Token::Address(
+                Address::from_str(callbacker.as_str()).unwrap(),
+            ));
+            let mut tokens_callback_args: Vec<Token> = vec![];
+            for callback_arg in callback_args {
+                tokens_callback_args.push(Token::Uint(Uint::from_big_endian(
+                    &callback_arg.to_be_bytes(),
+                )))
+            }
+            tokens.push(Token::Array(tokens_callback_args));
+            WITHDRAW_TIMESTAMP.save(
+                deps.storage,
+                (bot_id.to_string(), remaining_count.to_string()),
+                &env.block.time,
+            )?;
+        }
+        if tokens.is_empty() {
+            Err(AllPending {})
+        } else {
+            Ok(Response::new()
+                .add_message(CosmosMsg::Custom(PalomaMsg {
+                    job_id: state.job_id,
+                    payload: Binary(
+                        contract
+                            .function("create_next_bot")
+                            .unwrap()
+                            .encode_input(tokens.as_slice())
+                            .unwrap(),
+                    ),
+                    metadata: state.metadata,
+                }))
+                .add_attribute("action", "create_next_bot"))
+        }
+    }
+
     pub fn repay_bot(
         deps: DepsMut,
+        env: Env,
         info: MessageInfo,
         bot_info: Vec<BotInfo>,
     ) -> Result<Response<PalomaMsg>, ContractError> {
@@ -121,36 +259,70 @@ pub mod execute {
         let mut token_bots: Vec<Token> = vec![];
         let mut token_callbackers: Vec<Token> = vec![];
         let mut token_callback_args: Vec<Token> = vec![];
+        let retry_delay: u64 = state.retry_delay;
         for bot in bot_info {
-            token_bots.push(Token::Address(Address::from_str(bot.bot.as_str()).unwrap()));
-            token_callbackers.push(Token::Address(
-                Address::from_str(bot.callbacker.as_str()).unwrap(),
-            ));
-            let mut callback_args: Vec<Token> = vec![];
-            for callback_arg in bot.callback_args {
-                callback_args.push(Token::Uint(Uint::from_big_endian(
-                    &callback_arg.to_be_bytes(),
-                )))
+            if let Some(timestamp) = WITHDRAW_TIMESTAMP
+                .may_load(deps.storage, (bot.bot.to_owned(), "repay".to_string()))?
+            {
+                if timestamp.plus_seconds(retry_delay).lt(&env.block.time) {
+                    token_bots.push(Token::Address(Address::from_str(bot.bot.as_str()).unwrap()));
+                    token_callbackers.push(Token::Address(
+                        Address::from_str(bot.callbacker.as_str()).unwrap(),
+                    ));
+                    let mut callback_args: Vec<Token> = vec![];
+                    for callback_arg in bot.callback_args {
+                        callback_args.push(Token::Uint(Uint::from_big_endian(
+                            &callback_arg.to_be_bytes(),
+                        )))
+                    }
+                    token_callback_args.push(Token::Array(callback_args));
+                    WITHDRAW_TIMESTAMP.save(
+                        deps.storage,
+                        (bot.bot.to_owned(), "repay".to_string()),
+                        &env.block.time,
+                    )?;
+                }
+            } else {
+                token_bots.push(Token::Address(Address::from_str(bot.bot.as_str()).unwrap()));
+                token_callbackers.push(Token::Address(
+                    Address::from_str(bot.callbacker.as_str()).unwrap(),
+                ));
+                let mut callback_args: Vec<Token> = vec![];
+                for callback_arg in bot.callback_args {
+                    callback_args.push(Token::Uint(Uint::from_big_endian(
+                        &callback_arg.to_be_bytes(),
+                    )))
+                }
+                token_callback_args.push(Token::Array(callback_args));
+                WITHDRAW_TIMESTAMP.save(
+                    deps.storage,
+                    (bot.bot.to_owned(), "repay".to_string()),
+                    &env.block.time,
+                )?;
             }
-            token_callback_args.push(Token::Array(callback_args));
         }
-        let tokens = vec![
-            Token::Array(token_bots),
-            Token::Array(token_callbackers),
-            Token::Array(token_callback_args),
-        ];
-        Ok(Response::new()
-            .add_message(CosmosMsg::Custom(PalomaMsg {
-                job_id: state.job_id,
-                payload: Binary(
-                    contract
-                        .function("repay_bot")
-                        .unwrap()
-                        .encode_input(tokens.as_slice())
-                        .unwrap(),
-                ),
-            }))
-            .add_attribute("action", "repay_bot"))
+        if token_bots.is_empty() {
+            Err(AllPending {})
+        } else {
+            let tokens = vec![
+                Token::Array(token_bots),
+                Token::Array(token_callbackers),
+                Token::Array(token_callback_args),
+            ];
+            Ok(Response::new()
+                .add_message(CosmosMsg::Custom(PalomaMsg {
+                    job_id: state.job_id,
+                    payload: Binary(
+                        contract
+                            .function("repay_bot")
+                            .unwrap()
+                            .encode_input(tokens.as_slice())
+                            .unwrap(),
+                    ),
+                    metadata: state.metadata,
+                }))
+                .add_attribute("action", "repay_bot"))
+        }
     }
 
     pub fn set_paloma(
@@ -189,6 +361,7 @@ pub mod execute {
                         .encode_input(&[])
                         .unwrap(),
                 ),
+                metadata: state.metadata,
             }))
             .add_attribute("action", "set_paloma"))
     }
@@ -236,6 +409,7 @@ pub mod execute {
                         .encode_input(&[Token::Address(new_compass_address)])
                         .unwrap(),
                 ),
+                metadata: state.metadata,
             }))
             .add_attribute("action", "update_compass"))
     }
@@ -283,6 +457,7 @@ pub mod execute {
                         .encode_input(&[Token::Address(new_blueprint_address)])
                         .unwrap(),
                 ),
+                metadata: state.metadata,
             }))
             .add_attribute("action", "update_blueprint"))
     }
@@ -331,6 +506,7 @@ pub mod execute {
                         .encode_input(&[Token::Address(update_refund_wallet_address)])
                         .unwrap(),
                 ),
+                metadata: state.metadata,
             }))
             .add_attribute("action", "update_refund_wallet"))
     }
@@ -379,6 +555,7 @@ pub mod execute {
                         ))])
                         .unwrap(),
                 ),
+                metadata: state.metadata,
             }))
             .add_attribute("action", "update_gas_fee"))
     }
@@ -427,6 +604,7 @@ pub mod execute {
                         .encode_input(&[Token::Address(new_service_fee_collector_address)])
                         .unwrap(),
                 ),
+                metadata: state.metadata,
             }))
             .add_attribute("action", "update_service_fee_collector"))
     }
@@ -475,6 +653,7 @@ pub mod execute {
                         ))])
                         .unwrap(),
                 ),
+                metadata: state.metadata,
             }))
             .add_attribute("action", "update_service_fee"))
     }

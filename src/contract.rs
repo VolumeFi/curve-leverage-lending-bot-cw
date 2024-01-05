@@ -162,6 +162,9 @@ pub mod execute {
                     )))
                 }
                 tokens.push(Token::Array(tokens_callback_args));
+                tokens.push(Token::Uint(Uint::from_big_endian(
+                    &remaining_count.to_be_bytes()
+                )));
                 WITHDRAW_TIMESTAMP.save(
                     deps.storage,
                     (bot_id.to_string(), remaining_count.to_string()),
@@ -180,6 +183,9 @@ pub mod execute {
                 )))
             }
             tokens.push(Token::Array(tokens_callback_args));
+            tokens.push(Token::Uint(Uint::from_big_endian(
+                &remaining_count.to_be_bytes()
+            )));
             WITHDRAW_TIMESTAMP.save(
                 deps.storage,
                 (bot_id.to_string(), remaining_count.to_string()),

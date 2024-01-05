@@ -115,26 +115,22 @@ pub mod execute {
                     inputs: vec![
                         Param {
                             name: "bot_id".to_string(),
-                            kind: ParamType::Array(Box::new(ParamType::Address)),
+                            kind: ParamType::Uint(256),
                             internal_type: None,
                         },
                         Param {
                             name: "callbacker".to_string(),
-                            kind: ParamType::Array(Box::new(ParamType::Address)),
+                            kind: ParamType::Address,
                             internal_type: None,
                         },
                         Param {
                             name: "callback_args".to_string(),
-                            kind: ParamType::Array(Box::new(ParamType::Array(Box::new(
-                                ParamType::Uint(256),
-                            )))),
+                            kind: ParamType::Array(Box::new(ParamType::Uint(256))),
                             internal_type: None,
                         },
                         Param {
                             name: "remaining_count".to_string(),
-                            kind: ParamType::Array(Box::new(ParamType::Array(Box::new(
-                                ParamType::Uint(256),
-                            )))),
+                            kind: ParamType::Uint(256),
                             internal_type: None,
                         },
                     ],

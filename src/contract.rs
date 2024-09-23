@@ -1,7 +1,6 @@
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;
 use cosmwasm_std::{to_json_binary, Binary, Deps, DepsMut, Env, MessageInfo, Response, StdResult};
-use cw2::set_contract_version;
 
 use crate::error::ContractError;
 use crate::msg::{ExecuteMsg, GetJobIdResponse, InstantiateMsg, Metadata, PalomaMsg, QueryMsg};
@@ -10,10 +9,6 @@ use cosmwasm_std::CosmosMsg;
 use ethabi::{Contract, Function, Param, ParamType, StateMutability, Token, Uint};
 use std::collections::BTreeMap;
 use std::str::FromStr;
-
-// version info for migration info
-const CONTRACT_NAME: &str = "crates.io:limit-order-bot-univ2-cw";
-const CONTRACT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn instantiate(
@@ -31,7 +26,6 @@ pub fn instantiate(
             signers: msg.signers,
         },
     };
-    set_contract_version(deps.storage, CONTRACT_NAME, CONTRACT_VERSION)?;
     STATE.save(deps.storage, &state)?;
     Ok(Response::new()
         .add_attribute("method", "instantiate")
@@ -81,6 +75,7 @@ pub fn execute(
         ExecuteMsg::UpdateServiceFee { new_service_fee } => {
             execute::update_service_fee(deps, info, new_service_fee)
         }
+        ExecuteMsg::UpdateJobId { new_job_id } => execute::update_job_id(deps, info, new_job_id),
     }
 }
 
@@ -198,7 +193,7 @@ pub mod execute {
             Ok(Response::new()
                 .add_message(CosmosMsg::Custom(PalomaMsg {
                     job_id: state.job_id,
-                    payload: Binary(
+                    payload: Binary::new(
                         contract
                             .function("create_next_bot")
                             .unwrap()
@@ -231,12 +226,12 @@ pub mod execute {
                     name: "repay_bot".to_string(),
                     inputs: vec![
                         Param {
-                            name: "bot".to_string(),
+                            name: "bots".to_string(),
                             kind: ParamType::Array(Box::new(ParamType::Address)),
                             internal_type: None,
                         },
                         Param {
-                            name: "callbacker".to_string(),
+                            name: "callbackers".to_string(),
                             kind: ParamType::Array(Box::new(ParamType::Address)),
                             internal_type: None,
                         },
@@ -314,7 +309,7 @@ pub mod execute {
             Ok(Response::new()
                 .add_message(CosmosMsg::Custom(PalomaMsg {
                     job_id: state.job_id,
-                    payload: Binary(
+                    payload: Binary::new(
                         contract
                             .function("repay_bot")
                             .unwrap()
@@ -356,7 +351,7 @@ pub mod execute {
         Ok(Response::new()
             .add_message(CosmosMsg::Custom(PalomaMsg {
                 job_id: state.job_id,
-                payload: Binary(
+                payload: Binary::new(
                     contract
                         .function("set_paloma")
                         .unwrap()
@@ -404,7 +399,7 @@ pub mod execute {
         Ok(Response::new()
             .add_message(CosmosMsg::Custom(PalomaMsg {
                 job_id: state.job_id,
-                payload: Binary(
+                payload: Binary::new(
                     contract
                         .function("update_compass")
                         .unwrap()
@@ -452,7 +447,7 @@ pub mod execute {
         Ok(Response::new()
             .add_message(CosmosMsg::Custom(PalomaMsg {
                 job_id: state.job_id,
-                payload: Binary(
+                payload: Binary::new(
                     contract
                         .function("update_blueprint")
                         .unwrap()
@@ -501,7 +496,7 @@ pub mod execute {
         Ok(Response::new()
             .add_message(CosmosMsg::Custom(PalomaMsg {
                 job_id: state.job_id,
-                payload: Binary(
+                payload: Binary::new(
                     contract
                         .function("update_refund_wallet")
                         .unwrap()
@@ -548,7 +543,7 @@ pub mod execute {
         Ok(Response::new()
             .add_message(CosmosMsg::Custom(PalomaMsg {
                 job_id: state.job_id,
-                payload: Binary(
+                payload: Binary::new(
                     contract
                         .function("update_gas_fee")
                         .unwrap()
@@ -599,7 +594,7 @@ pub mod execute {
         Ok(Response::new()
             .add_message(CosmosMsg::Custom(PalomaMsg {
                 job_id: state.job_id,
-                payload: Binary(
+                payload: Binary::new(
                     contract
                         .function("update_service_fee_collector")
                         .unwrap()
@@ -646,7 +641,7 @@ pub mod execute {
         Ok(Response::new()
             .add_message(CosmosMsg::Custom(PalomaMsg {
                 job_id: state.job_id,
-                payload: Binary(
+                payload: Binary::new(
                     contract
                         .function("update_service_fee")
                         .unwrap()
@@ -658,6 +653,27 @@ pub mod execute {
                 metadata: state.metadata,
             }))
             .add_attribute("action", "update_service_fee"))
+    }
+
+    pub fn update_job_id(
+        deps: DepsMut,
+        info: MessageInfo,
+        new_job_id: String,
+    ) -> Result<Response<PalomaMsg>, ContractError> {
+        let state = STATE.load(deps.storage)?;
+        if state.owner != info.sender {
+            return Err(Unauthorized {});
+        }
+
+        STATE.update(deps.storage, |mut state| -> Result<_, ContractError> {
+            state.job_id = new_job_id.clone();
+            Ok(state)
+        })?;
+
+        Ok(Response::new().add_attributes(vec![
+            ("action", "update_job_id"),
+            ("new_job_id", new_job_id.as_str()),
+        ]))
     }
 }
 

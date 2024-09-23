@@ -46,6 +46,9 @@ pub enum ExecuteMsg {
     UpdateServiceFee {
         new_service_fee: Uint256,
     },
+    UpdateJobId {
+        new_job_id: String,
+    },
 }
 
 #[cw_serde]
